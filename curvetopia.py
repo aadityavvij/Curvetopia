@@ -78,6 +78,6 @@ def polylines2svg(paths_XYs, svg_path):
     dwg.save()
 
 # Example usage
-paths = read_csv('examples/occlusion1.csv')
+paths = read_csv('examples/frag0.csv')
 plot(paths)
 polylines2svg(paths, 'occlusion1.svg')
