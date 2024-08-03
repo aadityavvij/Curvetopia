@@ -146,7 +146,7 @@ def polyline_to_bezier(polyline):
         bezier_curves.append((b0, b1, b2, b3))
     return bezier_curves
 
-def generate_svg(polylines, output_file, epsilon=2.0):
+def generate_svg(polylines, output_file, epsilon=0.2):
     dwg = svgwrite.Drawing(output_file, profile='tiny')
     for polyline in polylines:
         if len(polyline) > 1:  # Ensure there are at least two points to form a line
@@ -158,5 +158,5 @@ def generate_svg(polylines, output_file, epsilon=2.0):
     dwg.save()
 
 # Example usage:
-polylines = read_csv('./examples/frag0.csv')
-generate_svg(polylines, 'output.svg', epsilon=2.0)
+polylines = read_csv('./examples/occlusion1.csv')
+generate_svg(polylines, 'output.svg', epsilon=0.2)
