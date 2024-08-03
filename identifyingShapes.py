@@ -2,6 +2,90 @@ import csv
 import numpy as np
 import svgwrite
 from scipy.spatial import distance
+import xml.etree.ElementTree as ET
+import math
+
+def read_svg_lines(file_path):
+    tree = ET.parse(file_path)
+    root = tree.getroot()
+    lines = []
+
+    for elem in root.findall('.//{http://www.w3.org/2000/svg}line'):
+        x1 = float(elem.attrib['x1'])
+        y1 = float(elem.attrib['y1'])
+        x2 = float(elem.attrib['x2'])
+        y2 = float(elem.attrib['y2'])
+        lines.append(((x1, y1), (x2, y2), elem))
+
+    return tree, root, lines
+
+def are_close(a, b, tol=1):
+    return abs(a - b) < tol
+
+def distance(p1, p2):
+    return math.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
+
+def find_rectangles(lines, tol=1):
+    rectangles = []
+    used_lines = set()
+
+    for i, (p1, p2, l1) in enumerate(lines):
+        if i in used_lines:
+            continue
+        for j, (p3, p4, l2) in enumerate(lines):
+            if j in used_lines or j <= i:
+                continue
+            for k, (p5, p6, l3) in enumerate(lines):
+                if k in used_lines or k <= j:
+                    continue
+                for m, (p7, p8, l4) in enumerate(lines):
+                    if m in used_lines or m <= k:
+                        continue
+
+                    # Check if we have a rectangle
+                    d1 = distance(p1, p2)
+                    d2 = distance(p3, p4)
+                    d3 = distance(p5, p6)
+                    d4 = distance(p7, p8)
+
+                    if (are_close(d1, d3, tol) and are_close(d2, d4, tol)):
+                        points = {p1, p2, p3, p4, p5, p6, p7, p8}
+                        if len(points) == 4:
+                            rectangles.append((p1, p2, p3, p4))
+                            used_lines.update([i, j, k, m])
+                            break
+
+    return rectangles, used_lines
+
+def replace_lines_with_rectangles(root, lines, rectangles, used_lines):
+    for i, line in enumerate(lines):
+        if i not in used_lines:
+            continue
+        root.remove(line[2])
+
+    for rect in rectangles:
+        x_coords = [p[0] for p in rect]
+        y_coords = [p[1] for p in rect]
+        min_x, max_x = min(x_coords), max(x_coords)
+        min_y, max_y = min(y_coords), max(y_coords)
+        width = max_x - min_x
+        height = max_y - min_y
+
+        rect_elem = ET.Element('rect', {
+            'x': str(min_x),
+            'y': str(min_y),
+            'width': str(width),
+            'height': str(height),
+            'style': 'fill:none;stroke:black;stroke-width:1'
+        })
+        root.append(rect_elem)
+
+def process_svg(file_path, output_path):
+    tree, root, lines = read_svg_lines(file_path)
+    rectangles, used_lines = find_rectangles(lines)
+    replace_lines_with_rectangles(root, lines, rectangles, used_lines)
+    tree.write(output_path)
+
 
 def read_csv(file_path):
     polylines = []
@@ -105,6 +189,11 @@ def generate_svg(polylines, output_file, epsilon=0.2, threshold=10.5):
     dwg.save()
 
 # Example usage:
-file_path = './examples/frag2.csv'
+file_path = './examples/isolated.csv'
 polylines = read_csv(file_path)
 generate_svg(polylines, 'output.svg', epsilon=0.2, threshold=10.5)
+
+# Usage
+# input_file = 'output.svg'
+# output_file = 'output.svg'
+# process_svg(input_file, output_file)
