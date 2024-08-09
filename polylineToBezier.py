@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import math
-from collections import deque
+from collections import deque, defaultdict
 from skimage.measure import find_contours, approximate_polygon
 
 def read_csv_(csv_path):
@@ -231,16 +231,149 @@ def make_circle(XYs, num_points=100):
     ]).T
     return circle_points
 
-def process_paths(paths_XYs, circle_tolerance=0.1, rect_angle_tolerance=30, min_points=50):
+def is_approx_ellipse(XYs, tolerance=0.15, min_points=50):
+    if len(XYs) < min_points:
+        return False
+    centroid = np.mean(XYs, axis=0)
+    distances = np.linalg.norm(XYs - centroid, axis=1)
+    major_axis_length = max(distances)
+    minor_axis_length = min(distances)
+    eccentricity = np.sqrt(1 - (minor_axis_length**2 / major_axis_length**2))
+    return 0 < eccentricity < tolerance
+
+def make_ellipse(XYs, num_points=100):
+    centroid = np.mean(XYs, axis=0)
+    distances = np.linalg.norm(XYs - centroid, axis=1)
+    major_axis_length = max(distances)
+    minor_axis_length = min(distances)
+    angles = np.linspace(0, 2 * np.pi, num_points)
+    ellipse_points = np.array([
+        centroid[0] + major_axis_length * np.cos(angles),
+        centroid[1] + minor_axis_length * np.sin(angles)
+    ]).T
+    return np.vstack([ellipse_points, ellipse_points[0]])
+
+def is_approx_regular_polygon(XYs, angle_tolerance=10, length_tolerance=1):
+    # Number of sides is the number of unique points minus 1 (closing point)
+    num_sides = len(XYs) - 1
+    if num_sides < 3 or num_sides > 10:
+        return False
+    
+    # Calculate vectors for each side
+    vectors = np.diff(np.vstack([XYs, XYs[0]]), axis=0)
+    
+    # Calculate side lengths
+    lengths = np.linalg.norm(vectors, axis=1)
+    
+    # Check if all side lengths are approximately equal
+    if not np.allclose(lengths, lengths[0], rtol=length_tolerance):
+        return False
+    
+    # Calculate angles between consecutive sides
+    angles = []
+    for i in range(num_sides):
+        angle = np.arccos(np.clip(np.dot(vectors[i], vectors[(i+1) % num_sides]) / 
+                                  (np.linalg.norm(vectors[i]) * np.linalg.norm(vectors[(i+1) % num_sides])), -1.0, 1.0))
+        angles.append(np.degrees(angle))
+    
+    # The expected internal angle for a regular polygon
+    expected_angle = 180 - 360 / num_sides
+    
+    # Check if all angles are approximately equal to the expected internal angle
+    return np.allclose(angles, expected_angle, atol=angle_tolerance)
+
+def is_approx_star_shape(XYs, distance_tolerance=1, angle_tolerance=10):
+    # Ensure the polyline is closed
+    if not np.array_equal(XYs[0], XYs[-1]):
+        return False
+    
+    # Remove the closing point to work with the main points
+    points = XYs[:-1]
+    
+    # Ensure there are exactly 10 points (5 outer, 5 inner)
+    if len(points) != 10:
+        return False
+    
+    # Calculate the centroid (center) of the points
+    center = np.mean(points, axis=0)
+    
+    # Calculate distances of points from the center
+    distances = np.linalg.norm(points - center, axis=1)
+    
+    # Sort points based on angle relative to the center to ensure correct ordering
+    angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
+    sorted_indices = np.argsort(angles)
+    sorted_points = points[sorted_indices]
+    sorted_distances = distances[sorted_indices]
+    
+    # Classify into outer and inner points based on distance
+    outer_points = sorted_points[sorted_distances >= np.median(sorted_distances)]
+    inner_points = sorted_points[sorted_distances < np.median(sorted_distances)]
+    
+    # Check if all outer points are approximately equidistant from the center
+    if not np.allclose(np.linalg.norm(outer_points - center, axis=1), np.median(sorted_distances), rtol=distance_tolerance):
+        return False
+    
+    # Check if all inner points are approximately equidistant from the center
+    if not np.allclose(np.linalg.norm(inner_points - center, axis=1), np.median(sorted_distances), rtol=distance_tolerance):
+        return False
+    
+    angles = []
+    num_points = 10
+    for i in range(num_points - 1):
+        vector_i = points[i] - center
+        vector_next = points[(i + 1) % num_points] - center
+        
+        # Calculate the angle between vector_i and vector_next
+        angle = np.arccos(np.clip(np.dot(vector_i, vector_next) /
+                                 (np.linalg.norm(vector_i) * np.linalg.norm(vector_next)), -1.0, 1.0))
+        angles.append(np.degrees(angle))
+    
+    # Check if all angles are approximately equal
+    angles = np.array(angles)
+    mean_angle = np.mean(angles)
+    
+    return np.allclose(angles, mean_angle, atol=angle_tolerance)
+
+def classify_shape(XYs):
+    if len(XYs) == 2:
+        return "straight line"
+    elif is_approx_circle(XYs):
+        return "circle"
+    elif is_approx_ellipse(XYs):
+        return "ellipse"
+    elif is_approx_rectangle(XYs):
+        return "rectangle"
+    elif is_approx_regular_polygon(XYs):
+        return "regular_polygon"
+    elif is_approx_star_shape(XYs):
+        return "star"
+    else:
+        return "other"
+
+def process_paths(paths_XYs, circle_tolerance=0.1, rect_angle_tolerance=10, min_points=50):
+    shape_count = defaultdict(int)
     processed_paths = []
+    paths_XYs = remove_duplicate_points(paths_XYs)
+    
     for XYs in paths_XYs:
-        if is_approx_circle(XYs, circle_tolerance, min_points):
+        shape = classify_shape(XYs)
+        shape_count[shape] += 1
+        
+        if shape == "circle":
             processed_paths.append(make_circle(XYs))
-        elif is_approx_rectangle(XYs, rect_angle_tolerance):
+        elif shape == "ellipse":
+            processed_paths.append(make_ellipse(XYs))
+        elif shape == "rectangle":
             processed_paths.append(make_rectangle(XYs))
+        # elif shape == "regular_polygon":
+        #     processed_paths.append(make_regular_polygon(XYs))
+        # elif shape == "star":
+        #     processed_paths.append(XYs)
         else:
             processed_paths.append(XYs)
-    return processed_paths
+    
+    return processed_paths, shape_count
 
 def is_approx_rectangle(XYs, angle_tolerance=10):
     if len(XYs) != 5:
@@ -289,7 +422,9 @@ output_data2 = combine_all_polylines(output_data2)
 
 output_data2 = simplify_to_straight_lines(output_data2)
 output_data2 = combine_straight_polylines(output_data2)
-output_data2 = process_paths(output_data2)
+output_data2, shape_count = process_paths(output_data2)
+
+print("Shape Counts:", dict(shape_count))
 
 
 
