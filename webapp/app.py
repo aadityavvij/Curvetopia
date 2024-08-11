@@ -53,6 +53,3 @@ def index():
             return send_file(img, mimetype='image/png', as_attachment=True, download_name='plot.png')
 
     return render_template('index.html')
-
-if __name__ == "__main__":
-    app.run(debug=True)
