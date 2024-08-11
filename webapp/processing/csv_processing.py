@@ -5,45 +5,17 @@ from collections import deque, defaultdict
 from skimage.measure import find_contours, approximate_polygon
 from copy import deepcopy
 
-def read_csv_(csv_path):
-    np_path_XYs = np.genfromtxt(csv_path, delimiter=',')
-    path_XYs = []
-    unique_combinations = np.unique(np_path_XYs[:, :2], axis=0)  # Get unique combinations of path_id and segment_id
+def first(output_data2):
+    output_data2 = split_polyline_at_sharp_turns(output_data2, interval=1)
+    output_data2 = split_polyline_at_sharp_turns(output_data2)
+    output_data2 = combine_all_polylines(output_data2)
+    output_data2 = simplify_to_straight_lines(output_data2)
+    output_data2 = combine_all_polylines(output_data2)
+    output_data2 = simplify_to_straight_lines(output_data2)
+    output_data2 = combine_straight_polylines(output_data2)
+    output_data2, shape_count = process_paths(output_data2)
+    return output_data2, shape_count
 
-    for path_id, segment_id in unique_combinations:
-        npXYs = np_path_XYs[(np_path_XYs[:, 0] == path_id) & (np_path_XYs[:, 1] == segment_id)][:, 2:]  # Select all points for the path_id and segment_id, ignore the first two columns
-        path_XYs.append(npXYs)
-
-    return path_XYs
-
-def write_csv_(path_XYs, csv_path):
-    output_data = []
-
-    for path_id, XYs in enumerate(path_XYs):
-        segment_id = 0  # Assuming segment_id is 0 for all
-        for point in XYs:
-            row = [path_id, segment_id] + list(point)
-            output_data.append(row)
-
-    # Convert list to numpy array
-    output_data = np.array(output_data)
-    
-    # Write the numpy array to a CSV file
-    np.savetxt(csv_path, output_data, delimiter=',', fmt='%f')
-
-def calculate_angle(p1, p2, p3):
-    """Calculate the angle between the line segments p1p2 and p2p3."""
-    a = (p1[0] - p2[0], p1[1] - p2[1])
-    b = (p3[0] - p2[0], p3[1] - p2[1])
-    dot_product = a[0] * b[0] + a[1] * b[1]
-    mag_a = math.sqrt(a[0] ** 2 + a[1] ** 2)
-    mag_b = math.sqrt(b[0] ** 2 + b[1] ** 2)
-    if mag_a * mag_b == 0:
-        return 0
-    cosine_angle = dot_product / (mag_a * mag_b)
-    cosine_angle = max(min(cosine_angle, 1.0), -1.0)  # Clamp the value to the range [-1, 1]
-    angle = math.acos(cosine_angle)
-    return math.degrees(angle)
 
 def plot(paths_XYs, title, ax):
     colours = ['red', 'green', 'blue', 'yellow', 'purple']  # Define some colors for plotting
@@ -469,24 +441,16 @@ def plot_with_symmetry_lines(paths_XYs, title, ax):
     ax.set_aspect('equal')
     ax.set_title(title)
 
-# Example usage:
-csv_path = "./examples/isolated.csv"
-
-output_data1 = read_csv_(csv_path)
-output_data2 = read_csv_(csv_path)
-output_data2 = split_polyline_at_sharp_turns(output_data2, interval=1)
-output_data2 = split_polyline_at_sharp_turns(output_data2)
-output_data2 = combine_all_polylines(output_data2)
-output_data2 = simplify_to_straight_lines(output_data2)
-output_data2 = combine_all_polylines(output_data2)
-output_data2 = simplify_to_straight_lines(output_data2)
-output_data2 = combine_straight_polylines(output_data2)
-output_data2, shape_count = process_paths(output_data2)
-print("Shape Counts:", dict(shape_count))
-csv_output_path = "./output.csv"
-write_csv_(output_data2, csv_output_path)
-fig, axs = plt.subplots(1, 3, tight_layout=True, figsize=(16, 8))
-plot(output_data1, 'Original Data', axs[0])
-plot(output_data2, 'Regularized Data', axs[1])
-plot_with_symmetry_lines(output_data2, 'Processed Data with Symmetry Lines',axs[2])
-plt.show()
+def calculate_angle(p1, p2, p3):
+    """Calculate the angle between the line segments p1p2 and p2p3."""
+    a = (p1[0] - p2[0], p1[1] - p2[1])
+    b = (p3[0] - p2[0], p3[1] - p2[1])
+    dot_product = a[0] * b[0] + a[1] * b[1]
+    mag_a = math.sqrt(a[0] ** 2 + a[1] ** 2)
+    mag_b = math.sqrt(b[0] ** 2 + b[1] ** 2)
+    if mag_a * mag_b == 0:
+        return 0
+    cosine_angle = dot_product / (mag_a * mag_b)
+    cosine_angle = max(min(cosine_angle, 1.0), -1.0)  # Clamp the value to the range [-1, 1]
+    angle = math.acos(cosine_angle)
+    return math.degrees(angle)

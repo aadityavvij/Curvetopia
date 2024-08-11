@@ -1,0 +1,23 @@
+body {
+    background-color: #141414;
+    color: #dcdcdc;
+    font-family: 'Poppins', Arial, sans-serif;
+}
+
+.card {
+    border-radius: 10px;
+    padding: 20px;
+    background-color: #2a2a2a;
+}
+
+
+.btn {
+    padding: 10px 20px;
+    border-radius: 5px;
+}
+
+.form-control-file {
+    border: 1px solid;
+    border-radius: 5px;
+    padding: 5px;
+}
