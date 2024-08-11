@@ -8,10 +8,12 @@ from copy import deepcopy
 def read_csv_(csv_path):
     np_path_XYs = np.genfromtxt(csv_path, delimiter=',')
     path_XYs = []
-    for i in np.unique(np_path_XYs[:, 0]):
-        npXYs = np_path_XYs[np_path_XYs[:, 0] == i][:, 1:]  # Select all points for the path i, ignore the path_id
-        XYs = npXYs[:, 1:]  # Ignore the segment_id
-        path_XYs.append(XYs)
+    unique_combinations = np.unique(np_path_XYs[:, :2], axis=0)  # Get unique combinations of path_id and segment_id
+
+    for path_id, segment_id in unique_combinations:
+        npXYs = np_path_XYs[(np_path_XYs[:, 0] == path_id) & (np_path_XYs[:, 1] == segment_id)][:, 2:]  # Select all points for the path_id and segment_id, ignore the first two columns
+        path_XYs.append(npXYs)
+
     return path_XYs
 
 def calculate_angle(p1, p2, p3):
@@ -47,8 +49,8 @@ def split_polyline_at_sharp_turns(polylines, threshold_angle=130, interval=3):
             if i > interval and (i + interval) < len(polyline):
                 angle = calculate_angle(polyline[i-interval], polyline[i], polyline[i+interval])
                 if angle < threshold_angle:
-                    new_polylines.append(np.array(current_polyline[:-1]))
-                    current_polyline = current_polyline[-2:]
+                    new_polylines.append(np.array(current_polyline))
+                    current_polyline = current_polyline[-1:]
                     i += interval
                 else:
                     i += 1
@@ -63,7 +65,7 @@ def point_line_distance(p1, p2, p):
         return np.linalg.norm(p - p1)
     return np.abs(np.cross(p2-p1, p1-p)) / np.linalg.norm(p2-p1)
 
-def simplify_to_straight_lines(polylines, distance_threshold=11.0):
+def simplify_to_straight_lines(polylines, distance_threshold=11):
     """Simplify polylines by reducing almost straight segments to their endpoints."""
     simplified_polylines = []
     for polyline in polylines:
@@ -203,15 +205,6 @@ def combine_all_polylines(polylines, tolerance_distance=5.0, tolerance_parallel=
 
     return combined_polylines
 
-def remove_duplicate_points(paths_XYs):
-    processed_paths = []
-    for XYs in paths_XYs:
-        unique_XYs = [XYs[0]]
-        for point in XYs[1:]:
-            if not np.array_equal(point, unique_XYs[-1]):
-                unique_XYs.append(point)
-        processed_paths.append(np.array(unique_XYs))  # Convert back to numpy array
-    return processed_paths
 
 
 
@@ -338,6 +331,8 @@ def is_approx_star_shape(XYs, distance_tolerance=1, angle_tolerance=10):
 
 def classify_shape(XYs):
     if len(XYs) == 2:
+        if(np.allclose(XYs[0], XYs[1], atol=0.001)):
+            return "none"
         return "straight line"
     elif is_approx_circle(XYs):
         return "circle"
@@ -355,11 +350,11 @@ def classify_shape(XYs):
 def process_paths(paths_XYs, circle_tolerance=0.1, rect_angle_tolerance=10, min_points=50):
     shape_count = defaultdict(int)
     processed_paths = []
-    paths_XYs = remove_duplicate_points(paths_XYs)
     
     for XYs in paths_XYs:
         shape = classify_shape(XYs)
-        shape_count[shape] += 1
+        if(shape!="none"):
+            shape_count[shape] += 1
         
         if shape == "circle":
             processed_paths.append(make_circle(XYs))
@@ -367,10 +362,8 @@ def process_paths(paths_XYs, circle_tolerance=0.1, rect_angle_tolerance=10, min_
             processed_paths.append(make_ellipse(XYs))
         elif shape == "rectangle":
             processed_paths.append(make_rectangle(XYs))
-        # elif shape == "regular_polygon":
-        #     processed_paths.append(make_regular_polygon(XYs))
-        # elif shape == "star":
-        #     processed_paths.append(XYs)
+        elif shape == "none":
+            pass
         else:
             processed_paths.append(XYs)
     
@@ -407,14 +400,15 @@ def make_rectangle(XYs):
     ])
     return rectangle_points
 
-def add_symmetry_lines(ax, shape, XYs):
+def add_symmetry_lines(ax, XYs):
+    shape = classify_shape(XYs)
     if shape == "circle":
         centroid = np.mean(XYs, axis=0)
         radius = np.linalg.norm(XYs[0] - centroid)
-        for angle in np.linspace(0, 2 * np.pi, 8):  # Add 8 symmetry lines
-            line_x = [centroid[0] - radius * np.cos(angle), centroid[0] + radius * np.cos(angle)]
-            line_y = [centroid[1] - radius * np.sin(angle), centroid[1] + radius * np.sin(angle)]
-            ax.plot(line_x, line_y, 'k--', linewidth=1)
+        angle = -(np.pi/4)
+        line_x = [centroid[0] - radius * np.cos(angle), centroid[0] + radius * np.cos(angle)]
+        line_y = [centroid[1] - radius * np.sin(angle), centroid[1] + radius * np.sin(angle)]
+        ax.plot(line_x, line_y, 'k--', linewidth=1)
     elif shape == "ellipse":
         centroid = np.mean(XYs, axis=0)
         major_axis = (XYs[np.argmax(np.linalg.norm(XYs - centroid, axis=1))] - centroid)
@@ -423,13 +417,17 @@ def add_symmetry_lines(ax, shape, XYs):
             line_x = [centroid[0] - axis[0], centroid[0] + axis[0]]
             line_y = [centroid[1] - axis[1], centroid[1] + axis[1]]
             ax.plot(line_x, line_y, 'k--', linewidth=1)
+    elif shape == "star":
+        symmetry_lines = find_star_symmetry_lines(XYs)
+        for line in symmetry_lines:
+            ax.plot(line[:, 0], line[:, 1], c='black', linestyle='--', linewidth=1)
     elif shape == "rectangle":
-        # Symmetry lines are the medians (horizontal and vertical through the centroid)
         centroid = np.mean(XYs[:-1], axis=0)
         x_min, x_max = np.min(XYs[:, 0]), np.max(XYs[:, 0])
         y_min, y_max = np.min(XYs[:, 1]), np.max(XYs[:, 1])
         ax.plot([x_min, x_max], [centroid[1], centroid[1]], 'k--', linewidth=1)  # Horizontal symmetry line
         ax.plot([centroid[0], centroid[0]], [y_min, y_max], 'k--', linewidth=1)  # Vertical symmetry line
+        ax.plot([x_min, x_max], [y_min, y_max], 'k--', linewidth=1)  # Diagonal symmetry line
     elif shape == "regular_polygon":
         centroid = np.mean(XYs[:-1], axis=0)
         for vertex in XYs[:-1]:
@@ -437,16 +435,12 @@ def add_symmetry_lines(ax, shape, XYs):
 
 def find_star_symmetry_lines(XYs):
     symmetry_lines = []
-    
-    # Calculate the center of the star (centroid)
-    center = np.mean(XYs, axis=0)
-    
-    # Iterate through each pointy corner of the star (outer points)
-    for i in range(0, len(XYs), 2):  # Assuming pointy corners are at even indices
-        vertex = XYs[i]
+    for i in range(0, len(XYs), 2):
+        vertex1 = XYs[i]
+        vertex2 = XYs[(i+5)%10]
         
         # Create a line from the center to each vertex
-        line = np.vstack([center, vertex])
+        line = np.vstack([vertex1, vertex2])
         symmetry_lines.append(line)
     
     return symmetry_lines
@@ -454,22 +448,8 @@ def find_star_symmetry_lines(XYs):
 def plot_with_symmetry_lines(paths_XYs, title, ax):
     # Plot the paths using the existing plot function
     plot(paths_XYs, title, ax)
-    
-    # Make a deep copy of paths_XYs to avoid modifying the original data
-    paths_XYs_copy = deepcopy(paths_XYs)
-    
-    # Process the copy instead of the original
-    processed_paths, shape_count = process_paths(paths_XYs_copy)
-    
-    for i, (XYs, shape) in enumerate(zip(processed_paths, shape_count.keys())):
-        if shape == "straight_line":
-            continue  # Skip symmetry lines for straight lines
-        elif is_approx_star_shape(XYs):
-            symmetry_lines = find_star_symmetry_lines(XYs)
-            for line in symmetry_lines:
-                ax.plot(line[:, 0], line[:, 1], c='black', linestyle='--', linewidth=1)
-        else:
-            add_symmetry_lines(ax, shape, XYs)
+    for XYs in paths_XYs:
+        add_symmetry_lines(ax, XYs)
     
     ax.set_aspect('equal')
     ax.set_title(title)
@@ -479,14 +459,17 @@ csv_path = "./examples/isolated.csv"
 
 output_data1 = read_csv_(csv_path)
 output_data2 = read_csv_(csv_path)
+output_data2 = split_polyline_at_sharp_turns(output_data2, interval=1)
 output_data2 = split_polyline_at_sharp_turns(output_data2)
+output_data2 = combine_all_polylines(output_data2)
 output_data2 = simplify_to_straight_lines(output_data2)
 output_data2 = combine_all_polylines(output_data2)
 output_data2 = simplify_to_straight_lines(output_data2)
 output_data2 = combine_straight_polylines(output_data2)
 output_data2, shape_count = process_paths(output_data2)
 print("Shape Counts:", dict(shape_count))
-fig, axs = plt.subplots(1, 2, tight_layout=True, figsize=(16, 8))
+fig, axs = plt.subplots(1, 3, tight_layout=True, figsize=(16, 8))
 plot(output_data1, 'Original Data', axs[0])
-plot_with_symmetry_lines(output_data2, 'Processed Data with Symmetry Lines',axs[1])
+plot(output_data2, 'Regularized Data', axs[1])
+plot_with_symmetry_lines(output_data2, 'Processed Data with Symmetry Lines',axs[2])
 plt.show()
